@@ -13,7 +13,14 @@ namespace cu{
   class string_view{
 
     inline static constexpr __host__ __device__ size_t strlen(const char* Str) noexcept{
-
+#if defined(__CUDACC__)
+      unsigned Len = 0;
+      while(Str[Len])
+        ++Len;
+      return Len;
+#else
+      return std::char_traits<char>::length(Str);
+#endif
     }
 
     const char* Data;
@@ -62,14 +69,14 @@ namespace cu{
     [[nodiscard]] __host__ __device__ constexpr const_iterator cend() const noexcept
     { return this->Data + this->Size; }
 
-    [[nodiscard]] __host__ __device__ constexpr const_reverse_iterator rbegin() const noexcept
+    /*[[nodiscard]] __host__ __device__ constexpr const_reverse_iterator rbegin() const noexcept
     { return const_reverse_iterator(this->end()); }
     [[nodiscard]] __host__ __device__ constexpr const_reverse_iterator rend() const noexcept
     { return const_reverse_iterator(this->begin()); }
     [[nodiscard]] __host__ __device__ constexpr const_reverse_iterator crbegin() const noexcept
     { return const_reverse_iterator(this->end()); }
     [[nodiscard]] __host__ __device__ constexpr const_reverse_iterator crend() const noexcept
-    { return const_reverse_iterator(this->begin()); }
+    { return const_reverse_iterator(this->begin()); }*/
 
     // [string.view.capacity], capacity
 
@@ -125,7 +132,7 @@ namespace cu{
 
     __host__ __device__ constexpr void remove_prefix(size_type n) noexcept
     {
-      __glibcxx_assert(this->Size >= n);
+      assert(this->Size >= n);
       this->Data += n;
       this->Size -= n;
     }
@@ -140,10 +147,10 @@ namespace cu{
 
     // [string.view.ops], string operations:
 
-    __host__ __device__ constexpr size_type copy(char* str, size_type n, size_type pos = 0) const
+    /*__host__ __device__ constexpr size_type copy(char* str, size_type n, size_type pos = 0) const
     {
-      __glibcxx_requires_string_len(str, n);
-      pos = std::__sv_check(size(), pos, "string_view::copy");
+      //__glibcxx_requires_string_len(str, n);
+      //pos = std::__sv_check(size(), pos, "string_view::copy");
       const size_type rlen = std::min(n, Size - pos);
       // _GLIBCXX_RESOLVE_LIB_DEFECTS
       // 2777. string_view::copy should use char_traits::copy
@@ -158,14 +165,14 @@ namespace cu{
       return string_view{Data + pos, rlen};
     }
 
-    [[nodiscard]] __host__ __device__ constexpr int compare(string_view str) const noexcept
+    *//*[[nodiscard]] __host__ __device__ constexpr int compare(string_view str) const noexcept
     {
       const size_type rlen = std::min(this->Size, str.Size);
       int ret = traits_type::compare(this->Data, str.Data, rlen);
       if (ret == 0)
         ret = _s_compare(this->Size, str.Size);
       return ret;
-    }
+    }*//*
     [[nodiscard]] __host__ __device__ constexpr int compare(size_type pos1, size_type n1, string_view str) const
     { return this->substr(pos1, n1).compare(str); }
     [[nodiscard]] __host__ __device__ constexpr int compare(size_type pos1, size_type n1, string_view str, size_type pos2, size_type n2) const
@@ -183,23 +190,22 @@ namespace cu{
     }
 
     [[nodiscard]] __host__ __device__ constexpr bool starts_with(string_view x) const noexcept
-    { return this->substr(0, x.size()) == x; }
+    { return this->substr(0, x.size()) == x; }*/
     [[nodiscard]] __host__ __device__ constexpr bool starts_with(char x) const noexcept
     { return !this->empty() && traits_type::eq(this->front(), x); }
-    [[nodiscard]] __host__ __device__ constexpr bool starts_with(const char* x) const noexcept
-    { return this->starts_with(string_view(x)); }
+    /*[[nodiscard]] __host__ __device__ constexpr bool starts_with(const char* x) const noexcept
+    { return this->starts_with(string_view(x)); }*/
 
-    [[nodiscard]] __host__ __device__ constexpr bool ends_with(string_view x) const noexcept
+    /*[[nodiscard]] __host__ __device__ constexpr bool ends_with(string_view x) const noexcept
     {
       return this->size() >= x.size() && this->compare(this->size() - x.size(), npos, x) == 0;
-    }
+    }*/
     [[nodiscard]] __host__ __device__ constexpr bool ends_with(char x) const noexcept
     { return !this->empty() && traits_type::eq(this->back(), x); }
-    [[nodiscard]] __host__ __device__ constexpr bool ends_with(const char* x) const noexcept
-    { return this->ends_with(string_view(x)); }
+    /*[[nodiscard]] __host__ __device__ constexpr bool ends_with(const char* x) const noexcept
+    { return this->ends_with(string_view(x)); }*/
 
-
-    [[nodiscard]] __host__ __device__ constexpr size_type find(string_view str, size_type pos = 0) const noexcept
+   /* [[nodiscard]] __host__ __device__ constexpr size_type find(string_view str, size_type pos = 0) const noexcept
     { return this->find(str.Data, pos, str.Size); }
     [[nodiscard]] __host__ __device__ constexpr size_type find(char c, size_type pos = 0) const noexcept;
     [[nodiscard]] __host__ __device__ constexpr size_type find(const char* str, size_type pos, size_type n) const noexcept;
@@ -210,7 +216,7 @@ namespace cu{
     { return this->rfind(str.Data, pos, str.Size); }
     [[nodiscard]] __host__ __device__ constexpr size_type rfind(char c, size_type pos = npos) const noexcept;
     [[nodiscard]] __host__ __device__ constexpr size_type rfind(const char* str, size_type pos, size_type n) const noexcept;
-    [[gnu::__nonnull__]] constexpr size_type rfind(const char* str, size_type pos = npos) const noexcept
+    [[gnu::__nonnull__]] __host__ __device__  constexpr size_type rfind(const char* str, size_type pos = npos) const noexcept
     { return this->rfind(str, pos, traits_type::length(str)); }
 
     [[nodiscard]] __host__ __device__ constexpr size_type find_first_of(string_view str, size_type pos = 0) const noexcept
@@ -218,7 +224,7 @@ namespace cu{
     [[nodiscard]] __host__ __device__ constexpr size_type find_first_of(char c, size_type pos = 0) const noexcept
     { return this->find(c, pos); }
     [[nodiscard]] __host__ __device__ constexpr size_type find_first_of(const char* str, size_type pos, size_type n) const noexcept;
-    [[gnu::__nonnull__]] constexpr size_type find_first_of(const char* str, size_type pos = 0) const noexcept
+    [[gnu::__nonnull__]] __host__ __device__  constexpr size_type find_first_of(const char* str, size_type pos = 0) const noexcept
     { return this->find_first_of(str, pos, traits_type::length(str)); }
 
     [[nodiscard]] __host__ __device__ constexpr size_type find_last_of(string_view str, size_type pos = npos) const noexcept
@@ -226,14 +232,14 @@ namespace cu{
     [[nodiscard]] __host__ __device__ constexpr size_type find_last_of(char c, size_type pos=npos) const noexcept
     { return this->rfind(c, pos); }
     [[nodiscard]] __host__ __device__ constexpr size_type find_last_of(const char* str, size_type pos, size_type n) const noexcept;
-    [[gnu::__nonnull__]] constexpr size_type find_last_of(const char* str, size_type pos = npos) const noexcept
+    [[gnu::__nonnull__]] __host__ __device__ constexpr size_type find_last_of(const char* str, size_type pos = npos) const noexcept
     { return this->find_last_of(str, pos, traits_type::length(str)); }
 
     [[nodiscard]] __host__ __device__ constexpr size_type find_first_not_of(string_view str, size_type pos = 0) const noexcept
     { return this->find_first_not_of(str.Data, pos, str.Size); }
     [[nodiscard]] __host__ __device__ constexpr size_type find_first_not_of(char c, size_type pos = 0) const noexcept;
     [[nodiscard]] __host__ __device__ constexpr size_type find_first_not_of(const char* str, size_type pos, size_type n) const noexcept;
-    [[gnu::__nonnull__]] constexpr size_type find_first_not_of(const char* str, size_type pos = 0) const noexcept
+    [[gnu::__nonnull__]] __host__ __device__ constexpr size_type find_first_not_of(const char* str, size_type pos = 0) const noexcept
     {
       return this->find_first_not_of(str, pos, traits_type::length(str));
     }
@@ -242,11 +248,11 @@ namespace cu{
     { return this->find_last_not_of(str.Data, pos, str.Size); }
     [[nodiscard]] __host__ __device__ constexpr size_type find_last_not_of(char c, size_type pos = npos) const noexcept;
     [[nodiscard]] __host__ __device__ constexpr size_type find_last_not_of(const char* str, size_type pos, size_type n) const noexcept;
-    [[gnu::__nonnull__]] constexpr size_type find_last_not_of(const char* str, size_type pos = npos) const noexcept
+    [[gnu::__nonnull__]] __host__ __device__ constexpr size_type find_last_not_of(const char* str, size_type pos = npos) const noexcept
     {
       return this->find_last_not_of(str, pos, traits_type::length(str));
     }
-
+*/
   private:
     __host__ __device__ static constexpr int _s_compare(size_type n1, size_type n2) noexcept
     {
@@ -259,7 +265,11 @@ namespace cu{
     }
   };
 
-  inline static constexpr string_view get_device_function_address = "";
+  inline static constexpr string_view get_device_function_address = R"src(
+    extern "C" __global__ void fetch_function_ptr_of${_FnName}(${_RetType}(**fn_ptr)(${_Args...})){
+      *fn_ptr = &${_FnName};
+    }
+  )src";
 
 
   template <typename Sig>

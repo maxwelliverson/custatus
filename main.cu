@@ -69,15 +69,15 @@ class error{};
 class status_code{
 public:
   struct domain{
-    std::string_view(*name)();
-    std::string_view(*message)(int64_t Value);
+    cu::string_view(*name)();
+    cu::string_view(*message)(int64_t Value);
     bool(*equivalent)(const domain* Other, )
   };
 
   status_code();
 
   int64_t value() const noexcept;
-  std::string_view message() const noexcept;
+  cu::string_view message() const noexcept;
 
 private:
   int64_t Value;
