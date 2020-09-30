@@ -28,16 +28,17 @@
 #define INVAR(Name) ${Name}
 
 inline constexpr static std::string_view get_function_ptr =
-  EMBED_SOURCE_STRING(extern "C" __global__ void fetch_device_ptr_${_FnName}(${_RetType}(**fn_ptr)(${_Args...})){
-    *fn_ptr = &${_FnName};
-  });
+    EMBED_SOURCE_STRING(extern "C" __global__ void fetch_device_ptr_${_FnName}(${_RetType}(**fn_ptr)(${_Args...})){
+      *fn_ptr = &${_FnName};
+    });
 
-inline constexpr static std::string_view some_source = EMBED_SOURCE_STRING(__global__ void add_fn(int* A, int* B, size_t N){
-    unsigned I = threadIdx.x + blockDim.x * blockIdx.x;
-    unsigned Stride = blockDim.x * gridDim.x;
-    for(; I < N; I += Stride)
-      A[I] += B[I];
-});
+inline constexpr static std::string_view some_source =
+    EMBED_SOURCE_STRING(__global__ void add_fn(int* A, int* B, size_t N){
+      unsigned I = threadIdx.x + blockDim.x * blockIdx.x;
+      unsigned Stride = blockDim.x * gridDim.x;
+      for(; I < N; I += Stride)
+        A[I] += B[I];
+    });
 
 namespace cu::rtc{
   class source_code{
@@ -76,10 +77,29 @@ namespace cu::rtc{
       return OS;
     }
   };
+  class function;
+  class global;
+  class module;
+  class ptx_source;
+
+  class compiler{
+    class impl;
+    class interface;
+  public:
+    compiler();
 
 
-  class ptx_module{};
+
+
+  private:
+    std::unique_ptr<impl> Impl;
+  };
   class ptx_source{};
+
+  class function{  };
+  class global{};
+  class module{};
+
 }
 
 #endif//CUDA_FUNCTIONS_RTC_H
