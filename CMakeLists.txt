@@ -11,6 +11,7 @@ add_library(cuda_rtc OBJECT rtc.cpp)
 add_library(cuda_event OBJECT event.cpp)
 add_library(custring OBJECT custring.cpp)
 add_library(custatus OBJECT status.cpp)
+target_include_directories(custatus PUBLIC ${CUDAToolkit_INCLUDE_DIRS})
 target_link_libraries(cuda_rtc PUBLIC CUDA::cuda_driver CUDA::nvrtc LLVMSupport)
 target_link_libraries(cuda_event PUBLIC CUDA::cuda_driver)
 target_compile_options(cuda_event PUBLIC -fcoroutines)
@@ -42,6 +43,7 @@ target_link_directories(test_custring PUBLIC ${LLVMLibPath})
 target_link_libraries(test_custring PUBLIC ${LLVMLibs})
 
 add_executable(test_custatus test_custatus.cpp $<TARGET_OBJECTS:custatus>)
+
 
 
 set_target_properties(

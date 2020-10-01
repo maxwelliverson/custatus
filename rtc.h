@@ -8,6 +8,7 @@
 #include <string_view>
 #include <span>
 #include <system_error>
+#include <memory>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/ADT/StringMap.h>
@@ -94,8 +95,20 @@ namespace cu::rtc{
   private:
     std::unique_ptr<impl> Impl;
   };
-  class ptx_source{};
+  class linker{
+    class impl;
+    class interface;
+  public:
+    linker();
 
+
+
+  private:
+    std::unique_ptr<impl> Impl;
+  };
+
+
+  class ptx_source{};
   class function{  };
   class global{};
   class module{};

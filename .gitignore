@@ -5,3 +5,4 @@
 /cmake-build-release/
 /cmake-build-release-clang/
 /cmake-build-release-gcc10/
+/.idea/
