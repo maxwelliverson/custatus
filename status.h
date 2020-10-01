@@ -7,6 +7,32 @@
 
 #include <string_view>
 #include <system_error>
+#include <cassert>
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(NDEBUG)
+#define CU_assert_bool(Expr, Msg) true
+#else
+#define CU_assert_bool(Expr, Msg) (bool(Expr) || ((_wassert(L""Msg, L"" __FILE__, unsigned(__LINE__))), false))
+#endif
+#define CU_assert(Expr) (void)CU_assert_bool(Expr, #Expr)
+#define CU_axiom(...) { bool __value_of_axiom(__VA_ARGS__); (void)CU_assert_bool(__value_of_axiom, #__VA_ARGS__); __assume(__value_of_axiom); }
+
+#define CU_pre(...) CU_axiom(__VA_ARGS__)
+#define CU_post(...) CU_axiom(__VA_ARGS__)
+#elif defined(__clang__)
+#if defined(NDEBUG)
+#define CU_assert_bool(Expr, Msg) true
+#else
+#define CU_assert_bool(Expr, Msg) (bool(Expr) || ((_wassert(L""Msg, L"" __FILE__, unsigned(__LINE__))), false))
+#endif
+#define CU_assert(Expr) (void)CU_assert_bool(Expr, #Expr)
+#define CU_axiom(...) { bool __value_of_axiom(__VA_ARGS__); (void)CU_assert_bool(__value_of_axiom, #__VA_ARGS__); __assume(__value_of_axiom); }
+
+#elif defined(__GNUC__)
+#endif
+
+
 
 namespace cu{
   /*class string_view{
@@ -371,11 +397,14 @@ namespace cu{
   };
 
   class status_code;
+  class status_domain;
 
   template <typename T>
-  struct is_status_code_enum : std::false_type {};
+  struct status_enum;
   template <typename T>
-  concept status_code_enum = is_status_code_enum<T>::value;
+  concept status_code_enum = requires(const status_domain* Domain){
+    { Domain = std::addressof(status_enum<T>::domain()) } noexcept;
+  };
 
   class status_domain{
     inline constexpr static uint64_t hash_string_view(std::string_view StringView) noexcept{
@@ -401,13 +430,23 @@ namespace cu{
     generic_code_fn_t GenericCode;
 
     constexpr status_domain(name_fn_t Name, message_fn_t Message, severity_fn_t Severity, generic_code_fn_t GenericCode) noexcept
-        : Id(hash_string_view(Name())), Name(Name), Message(Message), Severity(Severity), GenericCode(GenericCode){}
+        : Id(hash_string_view(Name())),
+          Name(Name),
+          Message(Message),
+          Severity(Severity),
+          GenericCode(GenericCode){}
   };
   class status_code{
     int64_t Value;
     const status_domain* Domain;
   public:
-    constexpr status_code(int64_t Value, const status_domain& Domain) noexcept : Value(Value), Domain(&Domain){}
+    template <status_code_enum Enum>
+    constexpr status_code(Enum Value) noexcept
+        : Value(static_cast<int64_t>(Value)),
+          Domain(std::addressof(status_enum<Enum>::domain())){}
+    constexpr status_code(int64_t Value, const status_domain& Domain) noexcept
+        : Value(Value),
+          Domain(&Domain){}
 
     [[nodiscard]] std::string_view domain() const noexcept{
       return Domain->Name();
@@ -447,11 +486,9 @@ namespace cu{
 
   };
 
-
   class status_handler{
     class action;
   };
-
   class handler_action{
     class interface;
   public:
