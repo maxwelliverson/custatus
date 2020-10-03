@@ -5,12 +5,15 @@
 #ifndef CUDA_FUNCTIONS_CUSTRING_H
 #define CUDA_FUNCTIONS_CUSTRING_H
 
+#include "contracts.h"
+
 #include <type_traits>
 #include <string>
 #include <concepts>
 #include <memory>
 #include <system_error>
 #include <iostream>
+#include <memory_resource>
 #include <llvm/Support/raw_ostream.h>
 
 
@@ -53,7 +56,7 @@ namespace cu{
           requires(requires{
             {size_functor::private_call(std::declval<const Str&>(), meta::overload<3>{})} -> std::convertible_to<size_t>; }
          ){
-        return size_functor::private_call(S, meta::overload<2>{});
+        return size_functor::private_call(S, meta::overload<3>{});
       }
     };
     class data_functor{
@@ -255,10 +258,8 @@ namespace cu{
         traits::deallocate(AllocCopy, Pointer, 1);
       }
     };
-
   }
-
-  class string{
+  /*class string{
     inline constexpr static functor::size_functor size_fn{};
     inline constexpr static functor::data_functor data_fn{};
     inline constexpr static functor::print_functor print_fn{};
@@ -451,7 +452,256 @@ namespace cu{
       String.StringPtr->print(OS);
       return OS;
     }
+  };*/
+
+  namespace detail{
+    template <typename Alloc>
+    struct allocator_like;
+    template <typename Alloc> requires(std::is_class_v<Alloc>)
+    struct allocator_like<Alloc>{
+      using type = Alloc;
+    };
+    template <std::derived_from<std::pmr::memory_resource> Alloc>
+    struct allocator_like<Alloc*>{
+      using type = std::pmr::polymorphic_allocator<std::byte>;
+    };
+
+    template <typename T>
+    concept allocator = requires{
+        typename allocator_like<T>::type;
+    } && requires(typename allocator_like<T>::type& A, size_t N){
+      { std::allocator_traits<typename allocator_like<T>::type>::allocate(A, N) };
+    };
+  }
+
+
+  template <typename Alloc = std::allocator<char>>
+  class fixed_string : std::allocator_traits<Alloc>::template rebind_alloc<char>{
+    using allocator = typename std::allocator_traits<Alloc>::template rebind_alloc<char>;
+    using alloc_traits = std::allocator_traits<allocator>;
+
+    inline allocator & alloc() noexcept{
+      return static_cast<allocator &>(*this);
+    }
+    inline const allocator & alloc() const noexcept{
+      return static_cast<const allocator &>(*this);
+    }
+
+    inline static char null_string[1] = "";
+
+    uint32_t AliasingBits = 0;
+    uint32_t Length = 0;
+    typename alloc_traits::pointer Data = null_string;
+  public:
+
+    using allocator_type = allocator;
+    using value_type = char;
+    using pointer = typename alloc_traits::pointer;
+    using const_pointer = typename alloc_traits::const_pointer;
+    using iterator = pointer;
+    using const_iterator = const_pointer;
+    using size_type = typename alloc_traits::size_type;
+
+
+
+    fixed_string() = default;
+    fixed_string(const fixed_string& Other) :
+      allocator(Other.alloc()),
+      AliasingBits(Other.AliasingBits),
+      Length(Other.Length),
+      Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memcpy(Data, Other.Data, Length + 1);
+    }
+    fixed_string(fixed_string&& Other) noexcept{
+      swap(Other);
+    }
+    explicit fixed_string(size_t ReserveLength, char CharValue = ' ') noexcept
+        : Length(ReserveLength),
+          Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memset(Data, CharValue, Length);
+      Data[Length] = '\0';
+    }
+    template <string_like Str>
+    fixed_string(const Str& String)
+        : Length(functor::size_functor{}(String)),
+          Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memcpy(Data, functor::data_functor{}(String), Length);
+      Data[Length] = '\0';
+    }
+
+    fixed_string(const allocator& Allocator) : allocator(Allocator){};
+    fixed_string(const fixed_string& Other, const allocator& Allocator) :
+        allocator(Allocator),
+        AliasingBits(Other.AliasingBits),
+        Length(Other.Length),
+        Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memcpy(Data, Other.Data, Length + 1);
+    }
+    fixed_string(size_t ReserveLength, char CharValue, const allocator& Allocator) noexcept
+        : allocator(Allocator),
+          Length(ReserveLength),
+          Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memset(Data, CharValue, Length);
+      Data[Length] = '\0';
+    }
+    template <string_like Str>
+    fixed_string(const Str& String, const allocator& Allocator)
+        : allocator(Allocator),
+          Length(functor::size_functor{}(String)),
+          Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memcpy(Data, functor::data_functor{}(String), Length);
+      Data[Length] = '\0';
+    }
+
+
+    fixed_string(const std::basic_string<char, std::char_traits<char>, allocator>& StdString) noexcept
+        : allocator(StdString.get_allocator()),
+          Length(StdString.size()),
+          Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memcpy(Data, StdString.data(), Length);
+      Data[Length] = '\0';
+    }
+    fixed_string(std::basic_string<char, std::char_traits<char>, allocator>&& StdString) noexcept
+        : Alloc(std::move(StdString.get_allocator())),
+          Length(StdString.size()),
+          Data(alloc_traits::allocate(alloc(), Length + 1)){
+      std::memcpy(Data, StdString.data(), Length);
+      Data[Length] = '\0';
+    }
+
+
+    fixed_string& operator=(const fixed_string& Other){
+      if(this != &Other){
+        this->~fixed_string();
+        ::new(this) fixed_string(Other);
+      }
+      return *this;
+    }
+    fixed_string& operator=(fixed_string&& Other) noexcept{
+      ~fixed_string();
+      ::new(this) fixed_string(std::move(Other));
+      return *this;
+    }
+
+    ~fixed_string(){
+      if(Length)
+        alloc_traits::deallocate(alloc(), Data, Length + 1);
+    }
+
+    allocator& get_allocator() noexcept{
+      return static_cast<allocator &>(*this);
+    }
+    const allocator& get_allocator() const noexcept{
+      return static_cast<const allocator &>(*this);
+    }
+
+
+
+
+    [[nodiscard]] pointer data() const noexcept{
+      return Data;
+    }
+
+    [[nodiscard]] size_type size() const noexcept{
+      return Length;
+    }
+    [[nodiscard]] size_type length() const noexcept{
+      return Length;
+    }
+    [[nodiscard]] bool empty() const noexcept{
+      return !Data[0];
+    }
+
+    [[nodiscard]] char& front() noexcept{
+      return *Data;
+    }
+    [[nodiscard]] const char& front() const noexcept{
+      return *Data;
+    }
+    [[nodiscard]] char& back() noexcept{
+      return Data[Length - 1];
+    }
+    [[nodiscard]] const char& back() const noexcept{
+      return Data[Length - 1];
+    }
+
+    [[nodiscard]] char& operator[](size_type N) noexcept{
+      CU_axiom(N < Length)
+      return Data[N];
+    }
+    [[nodiscard]] const char& operator[](size_type N) const noexcept{
+      CU_axiom(N < Length)
+      return Data[N];
+    }
+
+    [[nodiscard]] iterator begin() noexcept{
+      return Data;
+    }
+    [[nodiscard]] const_iterator begin() const noexcept{
+      return Data;
+    }
+    [[nodiscard]] const_iterator cbegin() const noexcept{
+      return Data;
+    }
+
+    [[nodiscard]] iterator end() noexcept{
+      return Data + Length;
+    }
+    [[nodiscard]] const_iterator end() const noexcept{
+      return Data + Length;
+    }
+    [[nodiscard]] const_iterator cend() const noexcept{
+      return Data + Length;
+    }
+
+    void swap(fixed_string& Other) noexcept{
+      if constexpr(!alloc_traits::propagates_on_container_swap::value)
+      CU_axiom(alloc() == Other.alloc())
+      std::swap(alloc(), Other.alloc());
+      std::swap(reinterpret_cast<std::byte(&)[16]>(AliasingBits),
+                reinterpret_cast<std::byte(&)[16]>(Other.AliasingBits));
+    }
+
+    template <string_like Str>
+    [[nodiscard]] int compare(const Str& String) const noexcept{
+      return this->compare(functor::data_functor{}(String), functor::size_functor{}(String));
+    }
+    [[nodiscard]] int compare(const char* CString, size_type Size) const noexcept{
+      if(int result = std::char_traits<char>::compare(
+          std::pointer_traits<pointer>::to_address(Data),
+          CString,
+          std::min(Length, Size)))
+        return result;
+      return int(Length <=> Size);
+    }
+
+    friend std::ostream& operator<<(std::ostream& OS, const fixed_string& Str){
+      return OS.write(Str.Data, Str.Length);
+    }
+    friend llvm::raw_ostream& operator<<(llvm::raw_ostream& OS, const fixed_string& Str){
+      return OS.write(Str.Data, Str.Length);
+    }
+    friend bool operator==(const fixed_string& A, const fixed_string& B) noexcept{
+      return (A <=> B) == std::strong_ordering::equal;
+    }
+    friend std::strong_ordering operator<=>(const fixed_string& A, const fixed_string& B) noexcept{
+      return std::lexicographical_compare_three_way(A.begin(), A.end(), B.begin(), B.end());
+    }
   };
+
+
+  template <typename Char, typename Traits, typename Allocator>
+  fixed_string(const std::basic_string<Char, Traits, Allocator>&) -> fixed_string<Allocator>;
+  template <typename Char, typename Traits, typename Allocator>
+  fixed_string(std::basic_string<Char, Traits, Allocator>&&) -> fixed_string<Allocator>;
+  template <string_like Str, detail::allocator Alloc>
+  fixed_string(const Str&, const Alloc&) -> fixed_string<typename detail::allocator_like<Alloc>::type>;
+  template <detail::allocator Alloc>
+  fixed_string(const Alloc&) -> fixed_string<typename detail::allocator_like<Alloc>::type>;
+  template <string_like Str>
+  fixed_string(const Str&) -> fixed_string<>;
+  template <detail::allocator Alloc>
+  fixed_string(size_t, char, const Alloc&) -> fixed_string<typename detail::allocator_like<Alloc>::type>;
 }
 
 #endif//CUDA_FUNCTIONS_CUSTRING_H

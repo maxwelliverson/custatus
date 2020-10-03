@@ -5,6 +5,9 @@
 #ifndef CUDA_FUNCTIONS_RTC_H
 #define CUDA_FUNCTIONS_RTC_H
 
+#include "util/custring.h"
+
+
 #include <string_view>
 #include <span>
 #include <system_error>
@@ -40,6 +43,11 @@ inline constexpr static std::string_view some_source =
       for(; I < N; I += Stride)
         A[I] += B[I];
     });
+
+
+namespace cu{
+
+}
 
 namespace cu::rtc{
   class source_code{
@@ -78,19 +86,120 @@ namespace cu::rtc{
       return OS;
     }
   };
+  namespace code{
+    class function{};
+    class kernel{};
+    class declaration{};
+    class block{};
+    class global{};
+    class constant{};
+  }
   class function;
   class global;
   class module;
-  class ptx_source;
+
+  enum class arch{
+    compute_35,
+    compute_37,
+    compute_50,
+    compute_52,
+    compute_53,
+    compute_60,
+    compute_61,
+    compute_62,
+    compute_70,
+    compute_72,
+    compute_75,
+    compute_80,
+    compute_86,
+    sm_35,
+    sm_37,
+    sm_50,
+    sm_52,
+    sm_53,
+    sm_60,
+    sm_61,
+    sm_62,
+    sm_70,
+    sm_72,
+    sm_75,
+    sm_80,
+    sm_86,
+  };
+  enum class standard{
+    cxx11,
+    cxx14,
+    cxx17
+  };
+  enum class default_execution_space{
+    host,
+    device
+  };
+
+  namespace options{
+    enum compiler{
+      builtin_move_forward,
+      builtin_initializer_list,
+      warnings,
+      pointer_aliasing,
+      device_as_default_execution_space,
+      denormal_values,
+      fma_instructions,
+      precise_sqrt,
+      precise_division,
+      fast_math,
+      extra_device_vectorization,
+      linking,
+      link_time_optimizations,
+      debug_info_generation,
+      line_info_generation,
+    };
+    enum linker{
+      wall_time,
+      log_info,
+      log_errors,
+      generate_debug_info,
+      verbose,
+      global_symbols
+    };
+  }
+
+  struct header{
+    llvm::SmallString<8> Name;
+    fixed_string<> Body;
+  };
 
   class compiler{
     class impl;
     class interface;
+    //class options;
   public:
+
+    using option = options::compiler;
+
+
     compiler();
+    ~compiler();
 
 
+    void enable(option Opt);
+    void disable(option Opt);
+    bool get(option Opt) const;
+    void set(option Opt, bool IsEnabled);
+    void set(default_execution_space ExecutionSpace);
 
+    void target(standard Std);
+    void target(arch Arch);
+    void set_max_register_count(uint32_t MaxRegCount);
+
+    void define(std::string_view PPMacro);
+    void undef(std::string_view PPMacro);
+    void search_path(std::string_view PPMacro);
+    void include(std::string_view Header);
+
+    module compile() const;
+
+    fixed_string<> log() const;
 
   private:
     std::unique_ptr<impl> Impl;
@@ -107,12 +216,27 @@ namespace cu::rtc{
     std::unique_ptr<impl> Impl;
   };
 
-
-  class ptx_source{};
-  class function{  };
-  class global{};
-  class module{};
-
+  class function{
+    class impl;
+  public:
+  private:
+    std::unique_ptr<impl> Impl;
+  };
+  class global{
+    class impl;
+  public:
+  private:
+    std::unique_ptr<impl> Impl;
+  };
+  class module{
+    class impl;
+    class ptx_source;
+    class cubin;
+    class fatbin;
+  public:
+  private:
+    std::unique_ptr<impl> Impl;
+  };
 }
 
 #endif//CUDA_FUNCTIONS_RTC_H

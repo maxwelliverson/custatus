@@ -2,25 +2,124 @@
 // Created by Maxwell on 2020-09-28.
 //
 
-#include "rtc.h"
+#include "include/rtc.h"
+#include "include/util/status.h"
 
 #include <algorithm>
 #include <iostream>
 #include <system_error>
 #include <range/v3/action/unique.hpp>
+#include <nvPTXCompiler.h>
+#include <nvrtc.h>
 #include <boost/outcome.hpp>
 #include <llvm/ADT/DirectedGraph.h>
 #include <llvm/ADT/MapVector.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringExtras.h>
-#include <llvm/ADT/ilist.h>
+#include <fatbinary.h>
+#include <optional>
+#include <magic_enum.hpp>
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning (disable : 4624)
+#endif
 
 namespace {
+
+  using namespace std::string_view_literals;
+
+  class nvrtc_domain : public cu::status_domain{
+  public:
+    constexpr nvrtc_domain() noexcept
+        : cu::status_domain(
+        []()noexcept { return "nvRTC"sv; },
+        [](int64_t Value) noexcept -> std::string_view {
+          /*switch((nvrtcResult)Value){
+            case NVRTC_SUCCESS:
+              return "success";
+            case NVRTC_ERROR_OUT_OF_MEMORY:
+              return "out of memory";
+            case NVRTC_ERROR_PROGRAM_CREATION_FAILURE:
+              return "program creation failure";
+            case NVRTC_ERROR_INVALID_INPUT:
+              return "invalid input";
+            case NVRTC_ERROR_INVALID_PROGRAM:
+              return "invalid program";
+            case NVRTC_ERROR_INVALID_OPTION:
+              return "invalid option";
+            case NVRTC_ERROR_COMPILATION:
+              return "compilation error";
+            case NVRTC_ERROR_BUILTIN_OPERATION_FAILURE:
+              return "builtin operation failure";
+            case NVRTC_ERROR_NO_NAME_EXPRESSIONS_AFTER_COMPILATION:
+              return "no name expressions after compilation";
+            case NVRTC_ERROR_NO_LOWERED_NAMES_BEFORE_COMPILATION:
+              return "no lowered named before compilation";
+            case NVRTC_ERROR_NAME_EXPRESSION_NOT_VALID:
+              return "name expression not valid";
+            case NVRTC_ERROR_INTERNAL_ERROR:
+              return "internal error";
+          }*/
+          return nvrtcGetErrorString((nvrtcResult)Value);
+        },
+        [](int64_t Value) noexcept -> cu::severity{
+          switch((nvrtcResult)Value){
+            case NVRTC_SUCCESS:
+              return cu::severity::success;
+            case NVRTC_ERROR_OUT_OF_MEMORY:
+              return cu::severity::fatal;
+            case NVRTC_ERROR_PROGRAM_CREATION_FAILURE:
+            case NVRTC_ERROR_INVALID_INPUT:
+            case NVRTC_ERROR_INVALID_PROGRAM:
+            case NVRTC_ERROR_INVALID_OPTION:
+              return cu::severity::low;
+            case NVRTC_ERROR_COMPILATION:
+            case NVRTC_ERROR_BUILTIN_OPERATION_FAILURE:
+            case NVRTC_ERROR_NO_NAME_EXPRESSIONS_AFTER_COMPILATION:
+            case NVRTC_ERROR_NO_LOWERED_NAMES_BEFORE_COMPILATION:
+            case NVRTC_ERROR_NAME_EXPRESSION_NOT_VALID:
+            case NVRTC_ERROR_INTERNAL_ERROR:
+              return cu::severity::high;
+          }
+        },
+        [](int64_t Value) noexcept -> cu::generic_code{
+          switch((nvrtcResult)Value){
+            case NVRTC_SUCCESS:
+              return cu::generic_code::success;
+            case NVRTC_ERROR_OUT_OF_MEMORY:
+              return cu::generic_code::not_enough_memory;
+
+            case NVRTC_ERROR_INVALID_INPUT:
+            case NVRTC_ERROR_INVALID_PROGRAM:
+            case NVRTC_ERROR_INVALID_OPTION:
+              return cu::generic_code::invalid_argument;
+            case NVRTC_ERROR_PROGRAM_CREATION_FAILURE:
+            case NVRTC_ERROR_INTERNAL_ERROR:
+              return cu::generic_code::state_not_recoverable;
+            case NVRTC_ERROR_COMPILATION:
+            case NVRTC_ERROR_BUILTIN_OPERATION_FAILURE:
+            case NVRTC_ERROR_NO_NAME_EXPRESSIONS_AFTER_COMPILATION:
+            case NVRTC_ERROR_NO_LOWERED_NAMES_BEFORE_COMPILATION:
+            case NVRTC_ERROR_NAME_EXPRESSION_NOT_VALID:
+              return cu::generic_code::unknown;
+          }
+        }){}
+  };
+
+  inline constexpr nvrtc_domain nvrtc_domain_v{};
+
   class source_template{};
   struct source_code_interface{
 
   };
 }
+
+template <>
+struct cu::status_enum<nvrtcResult>{
+  static constexpr const nvrtc_domain& domain() noexcept{
+    return nvrtc_domain_v;
+  }
+};
 
 struct cu::rtc::source_code::interface{
   bool (*const is_complete)();
@@ -33,19 +132,6 @@ struct cu::rtc::source_code::interface{
 };
 
 namespace{
-  class st_graph_node;
-  class st_graph_edge : public llvm::DGEdge<st_graph_node, st_graph_edge>{};
-  class st_graph_node : public llvm::DGNode<st_graph_node, st_graph_edge>{
-    llvm::SmallString<8> String;
-  public:
-
-  };
-  class source_template_node : public llvm::ilist_node<source_template_node>{
-    llvm::SmallString<32> String;
-  public:
-    explicit source_template_node(llvm::StringRef String) noexcept : String(String){}
-  };
-
   inline bool always_false() noexcept{
     return false;
   }
@@ -62,7 +148,6 @@ public:
   const cu::rtc::source_code::interface* Interface;
   explicit impl(const cu::rtc::source_code::interface* Interface) noexcept : Interface(Interface){}
 };
-
 class cu::rtc::source_code::empty_source : public cu::rtc::source_code::impl{
   inline static std::span<const llvm::StringRef> template_arguments_impl(const cu::rtc::source_code*) noexcept{
     return {};
@@ -219,6 +304,357 @@ public:
   }
 };
 
+
+class cu::rtc::compiler::impl{
+  friend compiler;
+
+  enum class cpp_op{
+    define,
+    undef,
+    include_path,
+    pre_include
+  };
+  class cpp_argument{
+    union{
+      uint32_t Operation;
+      fixed_string<> String;
+    };
+  public:
+    cpp_argument(cpp_op Op, std::string_view Argument) : String(Argument){
+      Operation = (uint32_t)Op;
+    }
+    cpp_argument(const cpp_argument& Other) : String(Other.String){
+      Operation = Other.Operation;
+    }
+    cpp_argument(cpp_argument&& Other) noexcept : String(std::move(Other.String)){
+      Operation = Other.Operation;
+    }
+    ~cpp_argument(){
+      this->String.~fixed_string<>();
+    }
+    [[nodiscard]] std::string_view string() const noexcept{
+      return std::string_view(String.data(), String.size());
+    }
+    [[nodiscard]] cpp_op operation() const noexcept{
+      return static_cast<cpp_op>(Operation);
+    }
+  };
+
+
+  mutable cu::status_code Status;
+
+  fixed_string<> Name;
+  fixed_string<> Body;
+
+  nvPTXCompilerHandle PtxToMC;
+  nvrtcProgram CxxToPtx;
+  llvm::SmallVector<header, 2> HeaderFiles;
+  llvm::SmallVector<cpp_argument, 2> CppArguments;
+  struct{
+    uint32_t maxregcount = 0;
+    standard std : 8 = standard::cxx17;
+    arch gpu_architecture : 8 = arch::compute_52;
+    uint32_t builtin_move_forward : 1 = true;
+    uint32_t builtin_initializer_list : 1 = true;
+    uint32_t disable_warnings : 1 = false;
+    uint32_t restrict : 1 = false;
+    uint32_t device_as_default_execution_space : 1 = true;
+    uint32_t ftz : 1 = false;
+    uint32_t prec_sqrt : 1 = true;
+    uint32_t prec_div : 1 = true;
+    uint32_t fmad : 1 = true;
+    uint32_t use_fast_math : 1 = false;
+    uint32_t extra_device_vectorization : 1 = false;
+    uint32_t relocatable_device_code : 1 = false;
+    uint32_t extensible_whole_program : 1 = false;
+    uint32_t device_debug : 1 = false;
+    uint32_t generate_line_info : 1 = false;
+    uint32_t padding : 1 = false;
+  } opt;
+  static_assert(sizeof(opt) == sizeof(void*));
+
+public:
+  using option = ::cu::rtc::options::compiler;
+
+  impl() noexcept
+      : Status(cu::generic_code::success),
+        PtxToMC(),
+        CxxToPtx(),
+        CppArguments(),
+        opt(){}
+
+
+  [[nodiscard]] bool get(option Opt) const{
+    switch(Opt){
+      case options::builtin_move_forward:
+        return opt.builtin_move_forward;
+      case options::builtin_initializer_list:
+        return opt.builtin_initializer_list;
+      case options::warnings:
+        return !opt.disable_warnings;
+      case options::pointer_aliasing:
+        return !opt.restrict;
+      case options::device_as_default_execution_space:
+        return opt.device_as_default_execution_space;
+      case options::denormal_values:
+        return !opt.ftz;
+      case options::fma_instructions:
+        return opt.fmad;
+      case options::precise_sqrt:
+        return opt.prec_sqrt;
+      case options::precise_division:
+        return opt.prec_div;
+      case options::fast_math:
+        return opt.use_fast_math;
+      case options::extra_device_vectorization:
+        return opt.extra_device_vectorization;
+      case options::linking:
+        return opt.relocatable_device_code;
+      case options::debug_info_generation:
+        return opt.device_debug;
+      case options::line_info_generation:
+        return opt.generate_line_info;
+      case options::link_time_optimizations:
+        return opt.extensible_whole_program;
+      default:
+        Status = cu::generic_code::invalid_argument;
+        return false;
+    }
+  }
+  void set(option Opt, bool IsEnabled){
+    switch(Opt){
+      case options::builtin_move_forward:
+        opt.builtin_move_forward = IsEnabled;
+        break;
+      case options::builtin_initializer_list:
+        opt.builtin_initializer_list = IsEnabled;
+        break;
+      case options::warnings:
+        opt.disable_warnings = !IsEnabled;
+        break;
+      case options::pointer_aliasing:
+        opt.restrict = !IsEnabled;
+        break;
+      case options::device_as_default_execution_space:
+        opt.device_as_default_execution_space = IsEnabled;
+        break;
+      case options::denormal_values:
+        opt.ftz = !IsEnabled;
+        break;
+      case options::fma_instructions:
+        opt.fmad = IsEnabled;
+        break;
+      case options::precise_sqrt:
+        opt.prec_sqrt = IsEnabled;
+        break;
+      case options::precise_division:
+        opt.prec_div = IsEnabled;
+        break;
+      case options::fast_math:
+        opt.use_fast_math = IsEnabled;
+        break;
+      case options::extra_device_vectorization:
+        opt.extra_device_vectorization = IsEnabled;
+        break;
+      case options::linking:
+        opt.relocatable_device_code = IsEnabled;
+        break;
+      case options::debug_info_generation:
+        opt.device_debug = IsEnabled;
+        break;
+      case options::line_info_generation:
+        opt.generate_line_info = IsEnabled;
+        break;
+      case options::link_time_optimizations:
+        opt.extensible_whole_program = IsEnabled;
+      default:
+        Status = generic_code::invalid_argument;
+    }
+  }
+  void set(default_execution_space ExecutionSpace){
+    opt.device_as_default_execution_space = (ExecutionSpace == default_execution_space::device);
+  }
+
+
+  void target(standard Std){
+    opt.std = Std;
+  }
+  void target(arch Arch){
+    opt.gpu_architecture = Arch;
+  }
+  void set_max_register_count(uint32_t MaxRegCount){
+    opt.maxregcount = MaxRegCount;
+  }
+
+
+  void define(std::string_view PPMacro){
+    CppArguments.emplace_back(cpp_op::define, PPMacro);
+  }
+  void undef(std::string_view PPMacro){
+    CppArguments.emplace_back(cpp_op::undef, PPMacro);
+  }
+  void search_path(std::string_view Path){
+    CppArguments.emplace_back(cpp_op::include_path, Path);
+  }
+  void include(std::string_view Header){
+    CppArguments.emplace_back(cpp_op::pre_include, Header);
+  }
+
+  module compile(){
+    auto HeaderCount = (int) HeaderFiles.size();
+    auto HeaderNames = (const char**)alloca(HeaderCount * sizeof(void*));
+    auto HeaderSources = (const char**)alloca(HeaderCount * sizeof(void*));
+    size_t Index = 0;
+    for(auto Header : HeaderFiles){
+      HeaderNames[Index] = Header.Name.data();
+      HeaderSources[Index] = Header.Body.data();
+      Index += 1;
+    }
+
+    Status = nvrtcCreateProgram(&CxxToPtx,
+                                Body.data(),
+                                Name.data(),
+                                HeaderCount,
+                                HeaderSources,
+                                HeaderNames);
+
+    llvm::SmallVector<const char*, 16> Options;
+    for(auto Option : magic_enum::enum_values<options::compiler>()){
+      if(auto String = get_option_string(Option))
+        Options.push_back(String.value());
+    }
+
+
+
+    nvrtcCompileProgram(CxxToPtx, );
+
+
+    return cu::rtc::module();
+  }
+
+private:
+    inline std::optional<const char*> get_option_string(option Opt) const noexcept{
+      switch(Opt){
+        case options::builtin_move_forward:
+          if(!opt.builtin_move_forward)
+            return "--builtin-move-forward=false";
+          break;
+        case options::builtin_initializer_list:
+          if(!opt.builtin_initializer_list)
+            return "--builtin-initializer-list=false";
+          break;
+        case options::warnings:
+          if(opt.disable_warnings)
+            return "-w";
+          break;
+        case options::pointer_aliasing:
+          if(opt.restrict)
+            return "-restrict";
+          break;
+        case options::device_as_default_execution_space:
+          if(opt.device_as_default_execution_space)
+            return "-default-device";
+          break;
+        case options::denormal_values:
+          if(opt.ftz)
+            return "--ftz=true";
+          return "--ftx=false";
+        case options::fma_instructions:
+          if(opt.fmad)
+            return "--fmad=true";
+          return "--fmad=false";
+        case options::precise_sqrt:
+          if(opt.prec_sqrt)
+            return "--prec-sqrt=true";
+          return "--prec-sqrt=false";
+        case options::precise_division:
+          if(opt.prec_div)
+            return "--prec-div=true";
+          return "--prec-div=false";
+        case options::fast_math:
+          if(opt.use_fast_math)
+            return "-use_fast_math=true";
+          break;
+        case options::extra_device_vectorization:
+          if(opt.extra_device_vectorization)
+            return "-extra-device-vectorization";
+          break;
+        case options::linking:
+          if(opt.relocatable_device_code)
+            return "-dc";
+          break;
+        case options::debug_info_generation:
+          if(opt.device_debug)
+            return "-G";
+          break;
+        case options::line_info_generation:
+          if(opt.generate_line_info)
+            return "-lineinfo";
+          break;
+        case options::link_time_optimizations:
+          if(opt.extensible_whole_program)
+            return "-ewp";
+          break;
+      }
+      return std::nullopt;
+    }
+};
+class cu::rtc::linker::impl{
+
+};
+
+cu::rtc::compiler::compiler() : Impl(new impl()){}
+cu::rtc::compiler::~compiler() = default;
+void cu::rtc::compiler::enable(cu::rtc::compiler::option Opt) {
+  Impl->set(Opt, true);
+}
+void cu::rtc::compiler::disable(cu::rtc::compiler::option Opt) {
+  Impl->set(Opt, false);
+}
+bool cu::rtc::compiler::get(cu::rtc::compiler::option Opt) const {
+  return Impl->get(Opt);
+}
+void cu::rtc::compiler::set(cu::rtc::compiler::option Opt, bool IsEnabled) {
+  Impl->set(Opt, IsEnabled);
+}
+void cu::rtc::compiler::target(cu::rtc::standard Std) {
+  Impl->target(Std);
+}
+void cu::rtc::compiler::target(cu::rtc::arch Arch) {
+  Impl->target(Arch);
+}
+void cu::rtc::compiler::set_max_register_count(uint32_t MaxRegCount) {
+  Impl->set_max_register_count(MaxRegCount);
+}
+void cu::rtc::compiler::define(std::string_view PPMacro) {
+  Impl->define(PPMacro);
+}
+void cu::rtc::compiler::undef(std::string_view PPMacro) {
+  Impl->undef(PPMacro);
+}
+void cu::rtc::compiler::search_path(std::string_view PPMacro) {
+  Impl->search_path(PPMacro);
+}
+void cu::rtc::compiler::include(std::string_view Header) {
+  Impl->include(Header);
+}
+void cu::rtc::compiler::set(cu::rtc::default_execution_space ExecutionSpace) {
+  Impl->set(ExecutionSpace);
+}
+cu::fixed_string<> cu::rtc::compiler::log() const {
+  size_t LogSize = 8;
+  Impl->Status = nvrtcGetProgramLogSize(Impl->CxxToPtx, &LogSize);
+  if(Impl->Status != NVRTC_SUCCESS)
+    return "";
+  fixed_string Ret(LogSize);
+  Impl->Status = nvrtcGetProgramLog(Impl->CxxToPtx, Ret.data());
+  return std::move(Ret);
+}
+cu::rtc::module cu::rtc::compiler::compile() const {
+
+}
+
+
 [[nodiscard]] bool cu::rtc::source_code::empty() const noexcept{
   return Impl->Interface->is_empty();
 }
@@ -238,7 +674,7 @@ cu::rtc::source_code::source_code(cu::rtc::source_code &&Other) noexcept : Impl(
 }
 cu::rtc::source_code::~source_code() {
   if(empty())
-    Impl.release();
+    auto _ = Impl.release();
 }
 
 void cu::rtc::source_code::print(std::ostream &OS) const {
@@ -252,3 +688,5 @@ std::error_code cu::rtc::source_code::substitute(llvm::StringRef Key, llvm::Stri
   Impl->Interface->substitute(this, Err, Key, Substitution);
   return Err;
 }
+
+
