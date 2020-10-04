@@ -15,6 +15,7 @@
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/ADT/StringMap.h>
+#include "opal.h"
 
 
 /*#define _ptx_source_string_BEGIN_ R"ptx_src(
@@ -98,44 +99,6 @@ namespace cu::rtc{
   class global;
   class module;
 
-  enum class arch{
-    compute_35,
-    compute_37,
-    compute_50,
-    compute_52,
-    compute_53,
-    compute_60,
-    compute_61,
-    compute_62,
-    compute_70,
-    compute_72,
-    compute_75,
-    compute_80,
-    compute_86,
-    sm_35,
-    sm_37,
-    sm_50,
-    sm_52,
-    sm_53,
-    sm_60,
-    sm_61,
-    sm_62,
-    sm_70,
-    sm_72,
-    sm_75,
-    sm_80,
-    sm_86,
-  };
-  enum class standard{
-    cxx11,
-    cxx14,
-    cxx17
-  };
-  enum class default_execution_space{
-    host,
-    device
-  };
-
   namespace options{
     enum compiler{
       builtin_move_forward,
@@ -162,6 +125,43 @@ namespace cu::rtc{
       verbose,
       global_symbols
     };
+    enum class arch{
+      compute_35,
+      compute_37,
+      compute_50,
+      compute_52,
+      compute_53,
+      compute_60,
+      compute_61,
+      compute_62,
+      compute_70,
+      compute_72,
+      compute_75,
+      compute_80,
+      compute_86,
+      sm_35,
+      sm_37,
+      sm_50,
+      sm_52,
+      sm_53,
+      sm_60,
+      sm_61,
+      sm_62,
+      sm_70,
+      sm_72,
+      sm_75,
+      sm_80,
+      sm_86,
+    };
+    enum class standard{
+      cxx11,
+      cxx14,
+      cxx17
+    };
+    enum class default_execution_space{
+      host,
+      device
+    };
   }
 
   struct header{
@@ -186,10 +186,10 @@ namespace cu::rtc{
     void disable(option Opt);
     bool get(option Opt) const;
     void set(option Opt, bool IsEnabled);
-    void set(default_execution_space ExecutionSpace);
+    void set(options::default_execution_space ExecutionSpace);
 
-    void target(standard Std);
-    void target(arch Arch);
+    void target(options::standard Std);
+    void target(options::arch Arch);
     void set_max_register_count(uint32_t MaxRegCount);
 
     void define(std::string_view PPMacro);

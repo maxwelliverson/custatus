@@ -352,8 +352,8 @@ class cu::rtc::compiler::impl{
   llvm::SmallVector<cpp_argument, 2> CppArguments;
   struct{
     uint32_t maxregcount = 0;
-    standard std : 8 = standard::cxx17;
-    arch gpu_architecture : 8 = arch::compute_52;
+    options::standard std : 8 = options::standard::cxx17;
+    options::arch gpu_architecture : 8 = options::arch::compute_52;
     uint32_t builtin_move_forward : 1 = true;
     uint32_t builtin_initializer_list : 1 = true;
     uint32_t disable_warnings : 1 = false;
@@ -471,15 +471,15 @@ public:
         Status = generic_code::invalid_argument;
     }
   }
-  void set(default_execution_space ExecutionSpace){
-    opt.device_as_default_execution_space = (ExecutionSpace == default_execution_space::device);
+  void set(options::default_execution_space ExecutionSpace){
+    opt.device_as_default_execution_space = (ExecutionSpace == options::default_execution_space::device);
   }
 
 
-  void target(standard Std){
+  void target(options::standard Std){
     opt.std = Std;
   }
-  void target(arch Arch){
+  void target(options::arch Arch){
     opt.gpu_architecture = Arch;
   }
   void set_max_register_count(uint32_t MaxRegCount){
@@ -518,11 +518,15 @@ public:
                                 HeaderSources,
                                 HeaderNames);
 
+    static_assert(magic_enum::detail::values_v<option>[0] == option::builtin_move_forward);
+
     llvm::SmallVector<const char*, 16> Options;
-    for(auto Option : magic_enum::enum_values<options::compiler>()){
+    for(auto Option : magic_enum::enum_values<option>()){
       if(auto String = get_option_string(Option))
         Options.push_back(String.value());
     }
+
+    auto Hello = magic_enum::enum_values<option>();
 
 
 
@@ -617,10 +621,10 @@ bool cu::rtc::compiler::get(cu::rtc::compiler::option Opt) const {
 void cu::rtc::compiler::set(cu::rtc::compiler::option Opt, bool IsEnabled) {
   Impl->set(Opt, IsEnabled);
 }
-void cu::rtc::compiler::target(cu::rtc::standard Std) {
+void cu::rtc::compiler::target(options::standard Std) {
   Impl->target(Std);
 }
-void cu::rtc::compiler::target(cu::rtc::arch Arch) {
+void cu::rtc::compiler::target(options::arch Arch) {
   Impl->target(Arch);
 }
 void cu::rtc::compiler::set_max_register_count(uint32_t MaxRegCount) {
@@ -638,7 +642,7 @@ void cu::rtc::compiler::search_path(std::string_view PPMacro) {
 void cu::rtc::compiler::include(std::string_view Header) {
   Impl->include(Header);
 }
-void cu::rtc::compiler::set(cu::rtc::default_execution_space ExecutionSpace) {
+void cu::rtc::compiler::set(options::default_execution_space ExecutionSpace) {
   Impl->set(ExecutionSpace);
 }
 cu::fixed_string<> cu::rtc::compiler::log() const {
